@@ -1,15 +1,17 @@
-import os
-from dotenv import load_dotenv
-from typing import List
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import PromptTemplate
 from langchain.agents import create_react_agent, AgentExecutor
-from langchain_core.tools import Tool
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+
+# Initialize Flask app and enable CORS
+app = Flask(__name__)
+CORS(app)  # This enables CORS for all routes
 
 # Define a single, consistent model for the agent and tools
-llm = OllamaLLM(model="llama3", temperature=0)
+llm = OllamaLLM(model="llama3", temperature=0.3)
 
 # Connect to your database
 db = SQLDatabase.from_uri("postgresql+psycopg2://postgres:root@localhost:5432/dvdrental")
@@ -29,10 +31,13 @@ tools = [
 # The examples now use the most efficient queries and show the full chain of thought.
 examples = [
     (
-        "Question: How many artists are in the database?\n"
-        "Thought: I need to count the number of rows in the `actor` table. I will use the `sql_db_query` tool for this.\n"
+        "Question: What is the total number of actors?\n"
+        "Thought: The user wants to count the total number of actors. The `actor` table is the correct place to find this. I will count all rows in the table.\n"
         "Action: sql_db_query\n"
-        "Action Input: SELECT count(*) FROM actor;"
+        "Action Input: SELECT COUNT(*) FROM actor;\n"
+        "Observation: [(200,)]\n"
+        "Thought: I have the final count from the query result.\n"
+        "Final Answer: There are 200 actors in the database."
     ),
     (
         "Question: List all films with the least rental duration.\n"
@@ -70,6 +75,8 @@ Final Answer: the final answer to the original input question
 
 When forming a query, always select only the specific columns you need to answer the question, not all columns (e.g., avoid using SELECT *).
 
+**IMPORTANT: Once you have the information needed, you must provide the final answer and stop the process. Do not loop.**
+
 Here are some examples:
 {examples}
 
@@ -99,9 +106,43 @@ agent_executor = AgentExecutor(
     handle_parsing_errors=True
 )
 
-# Step 4: Run a sample query
-question = "Can you list down films which has rating PG-13?"
-response = agent_executor.invoke({"input": question})
+# # Step 4: Run a sample query
+# question = "how many films are there in database?"
+# response = agent_executor.invoke({"input": question})
+#
+# print("\nFinal Answer:")
+# print(response["output"])
 
-print("\nFinal Answer:")
-print(response["output"])
+# Step 4: Define the Flask route for the API endpoint
+@app.route('/query', methods=['POST'])
+def handle_query():
+    try:
+        data = request.get_json()
+        question = data.get('question')
+
+        if not question:
+            return jsonify({
+                'status': 'error',
+                'answer': 'Question field is missing in the request body.'
+            }), 400
+
+        # Invoke the agent executor with the user's question
+        response = agent_executor.invoke({"input": question})
+        final_answer = response["output"]
+
+        return jsonify({
+            'status': 'success',
+            'answer': final_answer
+        })
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return jsonify({
+            'status': 'error',
+            'answer': f'An internal server error occurred: {str(e)}'
+        }), 500
+
+
+# Step 5: Run the Flask application
+if __name__ == '__main__':
+    app.run(debug=True)
