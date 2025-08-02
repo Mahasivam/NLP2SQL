@@ -1,35 +1,33 @@
+# app.py
+
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import PromptTemplate
 from langchain.agents import create_react_agent, AgentExecutor
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+import os
 
-# Initialize Flask app and enable CORS
-app = Flask(__name__)
-CORS(app)  # This enables CORS for all routes
+# --- 1. NLP2SQL Agent Setup ---
+# This section contains the core logic of your NLP2SQL project.
+# The code is based on your provided examples.
 
-# Define a single, consistent model for the agent and tools
-llm = OllamaLLM(model="llama3", temperature=0)
-
-# Connect to your database
+# Initialize the database connection.
+# Make sure your database server is running and accessible.
 db = SQLDatabase.from_uri("postgresql+psycopg2://postgres:root@localhost:5432/dvdrental")
 
-# Create the toolkit. We will manually select tools to exclude the problematic `sql_db_query_checker`.
+# Initialize the Ollama LLM model.
+# Ensure that Ollama is running and the specified model is pulled.
+# Example: ollama run llama3
+llm = OllamaLLM(model="llama3", temperature=0.1)
+
+# Create the SQL database toolkit.
 toolkit = SQLDatabaseToolkit(db=db, llm=llm)
 
-# Manually build the list of tools, excluding the problematic `sql_db_query_checker`.
-all_tools = toolkit.get_tools()
-tools = [
-    tool
-    for tool in all_tools
-    if tool.name != "sql_db_query_checker"
-]
+# Filter out the 'sql_db_query_checker' tool as it is not needed for this simple setup.
+tools = [tool for tool in toolkit.get_tools() if tool.name != "sql_db_query_checker"]
 
-# === START OF ADDED SCHEMA ===
-# This schema is a structured text representation of your database tables,
-# generated from the CSV file you provided.
 db_schema = """
 - Table `actor`: `actor_id`, `first_name`, `last_name`, `last_update`
 - Table `actor_info`: `actor_id`, `first_name`, `last_name`, `film_info`
@@ -53,10 +51,9 @@ db_schema = """
 - Table `staff_list`: `id`, `name`, `address`, `zip code`, `phone`, `city`, `country`, `sid`
 - Table `store`: `store_id`, `manager_staff_id`, `address_id`, `last_update`
 """
-# === END OF ADDED SCHEMA ===
 
-# Step 1: Define Your Few-Shot Examples
-# The examples now use the most efficient queries and show the full chain of thought.
+# Place your few-shot examples here as a list of strings.
+# This helps the LLM generate more accurate SQL queries.
 examples = [
     (
         "Question: What is the total number of actors?\n"
@@ -64,7 +61,7 @@ examples = [
         "Action: sql_db_query\n"
         "Action Input: SELECT COUNT(*) FROM actor;\n"
         "Observation: [(200,)]\n"
-        "Thought: I have the final count from the query result.\n"
+        "Thought: The query returned a single value. I now know the final answer.\n"
         "Final Answer: There are 200 actors in the database."
     ),
     (
@@ -73,7 +70,7 @@ examples = [
         "Action: sql_db_query\n"
         "Action Input: SELECT title FROM film ORDER BY rental_duration ASC LIMIT 1;\n"
         "Observation: [('WONDERFUL FISH',)]\n"
-        "Thought: I have the final answer.\n"
+        "Thought: The query returned a single value. I now know the final answer.\n"
         "Final Answer: The film with the least rental duration is 'WONDERFUL FISH'."
     ),
     (
@@ -82,23 +79,49 @@ examples = [
         "Action: sql_db_query\n"
         "Action Input: SELECT co.country, COUNT(c.city) AS num_cities FROM city c JOIN country co ON c.country_id = co.country_id GROUP BY co.country ORDER BY num_cities DESC LIMIT 1;\n"
         "Observation: [('India', 60)]\n"
-        "Thought: I have the final count from the query result.\n"
+        "Thought: The query returned a single value. I now know the final answer.\n"
         "Final Answer: India has the most cities, with a total of 60 cities."
+    ),
+    (
+        "Question: Which customer has rented the most films?\n"
+        "Thought: To find the customer who has rented the most films, I need to count the number of rentals for each customer. This requires joining the customer table with the rental table on customer_id. I will then group the results by customer and order them to find the top customer.\n"
+        "Action: sql_db_query\n"
+        "Action Input: SELECT c.first_name, c.last_name, COUNT(r.rental_id) AS rental_count FROM customer AS c JOIN rental AS r ON c.customer_id = r.customer_id GROUP BY c.customer_id ORDER BY rental_count DESC LIMIT 1;\n"
+        "Observation: [('ELEANOR', 'HUNT', 46)]\n"
+        "Thought: The query returned a single value. I now know the final answer.\n"
+        "Final Answer: The customer who has rented the most films is Eleanor Hunt, with 46 rentals."
+    ),
+    (
+        "Question: what is the lowest rental duration for a film\n"
+        "Thought: The user wants to find the minimum rental duration. The `film` table has a `rental_duration` column. I will use the MIN aggregate function to find the lowest value.\n"
+        "Action: sql_db_query\n"
+        "Action Input: SELECT MIN(rental_duration) FROM film;\n"
+        "Observation: [(3,)]\n"
+        "Thought: The query returned a single value. I now know the final answer.\n"
+        "Final Answer: The lowest rental duration for a film is 3 days."
+    ),
+    (
+        "Question: what is the highest rental duration for a film\n"
+        "Thought: The user wants to find the maximum rental duration. The `film` table has a `rental_duration` column. I will use the MAX aggregate function to find the highest value.\n"
+        "Action: sql_db_query\n"
+        "Action Input: SELECT MAX(rental_duration) FROM film;\n"
+        "Observation: [(7,)]\n"
+        "Thought: The query returned a single value. I now know the final answer.\n"
+        "Final Answer: The highest rental duration for a film is 7 days."
     )
 ]
 
-# Step 2: Create the Final Prompt Template
-# This is a very strict, one-shot prompt designed to force the correct output format.
+example_string = "\n\n".join(examples)
+
+# Define the PromptTemplate.
+# This template guides the LLM to act as a SQL agent.
 template = """
 You are an agent designed to interact with a PostgreSQL database.
-You have access to the following tools:
-
-{tools}
-
-**Database Schema:**
-{db_schema}
-
-Follow this format exactly:
+Given an input question, you are to generate a valid SQL query to answer it.
+The database schema is as follows: {db_schema}
+The user is asking the following question: {input}
+You have access to the following tools: {tools}
+Use the following format:
 
 Question: the input question you must answer
 Thought: you should always think about what to do
@@ -106,35 +129,26 @@ Action: the action to take, should be one of [{tool_names}]
 Action Input: the input to the action
 Observation: the result of the action
 ... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I have the final answer.
+Thought: The query returned a single value. I now know the final answer.
 Final Answer: the final answer to the original input question
 
-When forming a query, always select only the specific columns you need to answer the question, not all columns (e.g., avoid using SELECT *).
-
-**IMPORTANT: Once you have the information needed, you must provide the final answer and stop the process. Do not loop.**
-
-Here are some examples:
-{examples}
+**IMPORTANT: Once you have a result that directly answers the question, you MUST provide the Final Answer and stop. Do not loop or attempt further actions.**
 
 Begin!
+
+{examples}
 
 Question: {input}
 {agent_scratchpad}
 """
-
-# Format the examples into a single string
-example_string = "\n\n".join(examples)
-
-# Create the final prompt template with all variables explicitly defined
 full_prompt = PromptTemplate(
     template=template,
     input_variables=['input', 'tools', 'tool_names', 'agent_scratchpad'],
     partial_variables={'examples': example_string, 'db_schema': db_schema}
 )
 
-# Step 3: Create the agent and the executor
+# Create the ReAct agent and the AgentExecutor.
 agent = create_react_agent(llm=llm, tools=tools, prompt=full_prompt)
-
 agent_executor = AgentExecutor(
     agent=agent,
     tools=tools,
@@ -142,43 +156,58 @@ agent_executor = AgentExecutor(
     handle_parsing_errors=True
 )
 
-# # Step 4: Run a sample query
-# question = "how many films are there in database?"
-# response = agent_executor.invoke({"input": question})
-#
-# print("\nFinal Answer:")
-# print(response["output"])
+# --- 2. Flask App Configuration ---
 
-# Step 4: Define the Flask route for the API endpoint
+app = Flask(__name__)
+
+# Enable CORS for all origins. This is crucial for allowing your
+# React frontend (which runs on a different port) to communicate
+# with this backend API without security errors.
+CORS(app)
+
+# --- 3. Define the API Endpoint ---
+
+# This route handles POST requests to the '/query' endpoint.
 @app.route('/query', methods=['POST'])
-def handle_query():
+def process_query():
+    """
+    Handles incoming POST requests from the frontend,
+    processes the natural language query using the NLP2SQL agent,
+    and returns a JSON response.
+    """
+    # 3.1. Extract the question from the incoming JSON data.
+    data = request.json
+    question = data.get('question', '')
+
+    # 3.2. Handle cases where the question is empty.
+    if not question:
+        return jsonify({'error': 'No question provided.'}), 400
+
     try:
-        data = request.get_json()
-        question = data.get('question')
-
-        if not question:
-            return jsonify({
-                'status': 'error',
-                'answer': 'Question field is missing in the request body.'
-            }), 400
-
-        # Invoke the agent executor with the user's question
+        # 3.3. Invoke your NLP2SQL agent with the user's question.
         response = agent_executor.invoke({"input": question})
-        final_answer = response["output"]
+        final_answer = response.get('output', 'Could not find an answer.')
 
+        # 3.4. Return a successful JSON response to the frontend.
         return jsonify({
-            'status': 'success',
-            'answer': final_answer
+            'question': question,
+            'answer': final_answer,
+            'status': 'success'
         })
-
     except Exception as e:
+        # 3.5. Catch any errors during the process and return
+        # a detailed error message with a 500 status code.
         print(f"An error occurred: {e}")
         return jsonify({
-            'status': 'error',
-            'answer': f'An internal server error occurred: {str(e)}'
+            'question': question,
+            'answer': str(e),
+            'status': 'error'
         }), 500
 
+# --- 4. Run the Flask Application ---
 
-# Step 5: Run the Flask application
 if __name__ == '__main__':
-    app.run(debug=True)
+    # The application will run in debug mode, which is helpful
+    # for development. The server will be accessible at
+    # http://127.0.0.1:5000
+    app.run(debug=True, port=5000)
