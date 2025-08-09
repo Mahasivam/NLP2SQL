@@ -24,3 +24,42 @@ SQL Generation: Converts the parsed query into an SQL statement using predefined
 Execution Engine: Executes the generated SQL query against the target database and retrieves the results.
 
 Feedback Loop: Employs reinforcement learning to refine the query generation process based on execution outcomes.
+
+🔧 Installation
+To get started with NLP2SQL, you'll need to install the required dependencies. You can do this by creating a virtual environment and installing the packages listed below.
+
+Prerequisites
+Python 3.8+
+
+Ollama: Make sure you have Ollama installed and running. Follow the official Ollama installation guide for your operating system.
+
+Steps
+Clone the repository:
+
+Bash
+
+git clone https://github.com/your_username/NLP2SQL.git
+cd NLP2SQL
+Create a virtual environment:
+
+Bash
+
+python -m venv venv
+Activate the virtual environment:
+
+On macOS and Linux:
+
+Bash
+
+source venv/bin/activate
+On Windows:
+
+Bash
+
+venv\Scripts\activate
+Install the requirements:
+
+Bash
+
+pip install Flask langchain ollama
+After following these steps, your environment will be set up with all the necessary packages to run the application.
