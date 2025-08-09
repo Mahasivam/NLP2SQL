@@ -34,32 +34,25 @@ Python 3.8+
 Ollama: Make sure you have Ollama installed and running. Follow the official Ollama installation guide for your operating system.
 
 Steps
-Clone the repository:
-
-Bash
+1. Clone the repository:
 
 git clone https://github.com/Mahasivam/NLP2SQL.git
 cd NLP2SQL
-Create a virtual environment:
 
-Bash
+2. Create a virtual environment:
 
 python -m venv venv
 Activate the virtual environment:
 
 On macOS and Linux:
 
-Bash
-
 source venv/bin/activate
+
 On Windows:
 
-Bash
-
 venv\Scripts\activate
-Install the requirements:
 
-Bash
+3. Install the requirements:
 
 pip install Flask langchain ollama
 After following these steps, your environment will be set up with all the necessary packages to run the application.
