@@ -38,7 +38,7 @@ Clone the repository:
 
 Bash
 
-git clone https://github.com/your_username/NLP2SQL.git
+git clone https://github.com/Mahasivam/NLP2SQL.git
 cd NLP2SQL
 Create a virtual environment:
 
